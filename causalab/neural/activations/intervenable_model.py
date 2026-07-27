@@ -40,6 +40,12 @@ def prepare_intervenable_model(
     Returns:
         intervenable_model: The prepared intervenable model on the pipeline's device
     """
+    # Backend seam: pipelines that build their own intervention handle (e.g. a
+    # native-hooks TracrPipeline) bypass pyvene entirely. LMPipeline has no such
+    # method and falls through to the pyvene path below.
+    if hasattr(pipeline, "build_intervention"):
+        return pipeline.build_intervention(model_units, intervention_type)
+
     # Auto-wrap if needed
     if isinstance(model_units, list):
         # Flat list - wrap in single group
@@ -128,6 +134,12 @@ def delete_intervenable_model(intervenable_model: pv.IntervenableModel) -> None:
     Args:
         intervenable_model: The pyvene intervenable model to be deleted
     """
+    # Backend seam: native handles free themselves via release() (no pyvene,
+    # no CUDA state to move). pyvene models have no release() and fall through.
+    if hasattr(intervenable_model, "release"):
+        intervenable_model.release()
+        return
+
     intervenable_model.set_device("cpu", set_model=False)
     del intervenable_model
     gc.collect()

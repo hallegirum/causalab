@@ -58,6 +58,12 @@ def set_interventions_interpolation(
         fn: Callable with signature (f_base, f_src, **params) -> Tensor.
         **params: Keyword arguments forwarded to fn on each call.
     """
+    # Backend seam: a native handle configures its fn directly; pyvene models
+    # expose per-intervention set_interpolation, handled by the loop below.
+    if hasattr(intervenable_model, "set_interpolation"):
+        intervenable_model.set_interpolation(fn, **params)
+        return
+
     for v in intervenable_model.interventions.values():
         intervention: Any = v[0] if isinstance(v, tuple) else v
         if hasattr(intervention, "set_interpolation"):

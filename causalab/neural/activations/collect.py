@@ -139,13 +139,23 @@ def collect_features(
         # Load inputs through pipeline
         loaded_inputs = pipeline.load(batched_inputs)
 
-        # Use shared helper to collect activations
-        result = _collect_activations_single_batch(
-            intervenable_model,
-            loaded_inputs,
-            indices,
-            return_model_output=collect_output_logits,
-        )
+        # Use shared helper to collect activations. Backend seam: pipelines with
+        # a native collect (e.g. TracrPipeline) bypass pyvene; LMPipeline has no
+        # such method and falls through to the pyvene helper.
+        if hasattr(pipeline, "intervenable_collect"):
+            result = pipeline.intervenable_collect(
+                intervenable_model,
+                loaded_inputs,
+                indices,
+                return_model_output=collect_output_logits,
+            )
+        else:
+            result = _collect_activations_single_batch(
+                intervenable_model,
+                loaded_inputs,
+                indices,
+                return_model_output=collect_output_logits,
+            )
 
         if collect_output_logits:
             activations, model_output = result
