@@ -4,12 +4,15 @@ import gc
 import logging
 import os
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
 
 import torch
 from torch import Tensor
 from transformers import AutoTokenizer, AutoModelForCausalLM, PreTrainedModel
-from pyvene import IntervenableModel  # type: ignore[import-untyped]
+if TYPE_CHECKING:
+    # Lazy: pyvene is only needed for the pyvene intervention path, not to import
+    # this module. Keeps a pyvene-less env (e.g. TracrPipeline verify) importable.
+    from pyvene import IntervenableModel  # type: ignore[import-untyped]
 from causalab.causal.counterfactual_dataset import CounterfactualExample
 from causalab.causal.trace import CausalTrace
 from tqdm import tqdm

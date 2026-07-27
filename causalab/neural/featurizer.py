@@ -19,10 +19,34 @@ from typing import Any
 import torch
 import torch.nn as nn
 from torch import Tensor
-import pyvene as pv  # type: ignore[import-untyped]
 
 # Type alias for composed errors: list of per-stage errors
 ComposedError = list[Tensor | None]
+
+
+class _LazyPyvene:
+    """Proxy bound to the module global ``pv`` so that ``pv.X`` inside the
+    build_feature_* factories imports pyvene only on first use.
+
+    This keeps this module importable WITHOUT pyvene (e.g. transitively via
+    TracrPipeline), so the InterpBench verify path runs in a pyvene-less env —
+    transformer_lens 1.19 and pyvene-git-main need incompatible transformers
+    versions and can't share a venv. A module-level ``__getattr__`` is NOT enough
+    here: bare ``pv`` lookups inside functions use LOAD_GLOBAL, which never calls
+    it — hence a real object in globals.
+    """
+
+    _mod = None
+
+    def __getattr__(self, name: str):
+        if _LazyPyvene._mod is None:
+            import pyvene as _pv  # type: ignore[import-untyped]
+
+            _LazyPyvene._mod = _pv
+        return getattr(_LazyPyvene._mod, name)
+
+
+pv = _LazyPyvene()
 
 
 def _iter_all_subclasses(cls: type) -> "list[type]":
