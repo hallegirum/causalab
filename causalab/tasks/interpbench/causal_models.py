@@ -2,7 +2,7 @@
 
 A tracr case is fully described by an :class:`InterpBenchConfig` (vocabulary,
 sequence length, and — the only case-specific line — ``hl_fn``, the high-level
-algorithm). :func:`create_interpbench_causal_model` turns that into a
+algorithm). :func:`create_causal_model` turns that into a
 ``CausalModel`` following the same convention as ``natural_domains_arithmetic``.
 
 Loader contract
@@ -77,7 +77,7 @@ class InterpBenchConfig:
         return 1 if self.bos is not None else 0
 
 
-def create_interpbench_causal_model(cfg: InterpBenchConfig) -> CausalModel:
+def create_causal_model(cfg: InterpBenchConfig) -> CausalModel:
     """Build the ``CausalModel`` for one tracr case (see module docstring)."""
     if cfg.hl_fn is None:
         raise ValueError(
@@ -121,11 +121,15 @@ def create_interpbench_causal_model(cfg: InterpBenchConfig) -> CausalModel:
     values["raw_input"] = None  # not sampled/enumerated
     values["raw_output"] = None
 
+    # result embedding: output label -> [index], so downstream manifold fitting has
+    _out_idx = {v: i for i, v in enumerate(cfg.out_vocab)}
+    embeddings = {"result": (lambda v, _m=_out_idx: [float(_m[v])]), **(cfg.embeddings or {})}
+
     model = CausalModel(
         mechanisms,
         values,
         id=f"interpbench_case{cfg.case}",
-        embeddings=cfg.embeddings or {},
+        embeddings=embeddings,
         periods=cfg.periods or {},
     )
     model._ib_cfg = cfg  # type: ignore[attr-defined]  # stash for token_positions / verify
@@ -180,7 +184,7 @@ def CREATE_CAUSAL_MODEL(task_cfg: dict) -> CausalModel:
     overrides = {k: v for k, v in task_cfg.items() if k != "case" and hasattr(cfg, k)}
     if overrides:
         cfg = replace(cfg, **overrides)
-    return create_interpbench_causal_model(cfg)
+    return create_causal_model(cfg)
 
 
 TARGET_VARIABLE = "result"
@@ -211,7 +215,7 @@ def verify_against_model(
     """
     import random
 
-    model = create_interpbench_causal_model(cfg)
+    model = create_causal_model(cfg)
     n_ctx = int(pipeline.model.cfg.n_ctx)
     assert cfg.seq_len + cfg.bos_offset == n_ctx, (
         f"seq_len({cfg.seq_len}) + bos_offset({cfg.bos_offset}) != model n_ctx({n_ctx}). "
