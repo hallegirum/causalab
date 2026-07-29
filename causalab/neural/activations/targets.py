@@ -286,6 +286,7 @@ def build_attention_head_targets(
     heads: List[int],
     token_position: TokenPosition,
     mode: str = "one_target_per_unit",
+    location: str | None = None,
 ) -> Dict[Tuple[Any, ...], InterchangeTarget]:
     """
     Build InterchangeTargets for attention head interventions.
@@ -325,6 +326,10 @@ def build_attention_head_targets(
             )
         head_size = pipeline.model.config.hidden_size // num_heads
 
+    # location="attn_result" patches per-head hook_result (d_model), not hook_z (d_head)
+    if location == "attn_result":
+        head_size = pipeline.model.config.hidden_size
+
     # Build all units with their keys
     units_with_keys = []
     for layer in layers:
@@ -337,6 +342,7 @@ def build_attention_head_targets(
                 feature_indices=None,
                 target_output=True,
                 shape=(head_size,),
+                location=location,
             )
             units_with_keys.append(((layer, head), unit))
 

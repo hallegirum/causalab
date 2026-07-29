@@ -214,9 +214,13 @@ class AttentionHead(AtomicModelUnit):
         shape: tuple[int, ...] | None = None,
         feature_indices: list[int] | None = None,
         target_output: bool = True,
+        location: str | None = None,
     ) -> None:
         self.head = head
-        component_type = (
+        # `location` overrides the default component_type (mirrors MLP's `location`).
+        # e.g. location="attn_result" -> patch blocks.L.attn.hook_result (per-head,
+        # d_model) instead of hook_z — InterpBench correspondences live at hook_result.
+        component_type = location or (
             "head_attention_value_output"
             if target_output
             else "head_attention_value_input"

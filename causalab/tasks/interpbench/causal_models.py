@@ -46,12 +46,14 @@ class InterpBenchConfig:
     seq_len : int
         Number of sequence slots, EXCLUDING BOS. Must equal the model's
         ``cfg.n_ctx - bos_offset`` (checked by :func:`verify_against_model`).
-    hl_fn : Callable[[list], list]
-        The ground-truth algorithm: maps the symbol sequence (length ``seq_len``)
-        to a **per-position** output list (also length ``seq_len``). For an
-        aggregation task, broadcast the answer across positions.
     out_vocab : list
         Domain of the output labels (the classes ``result`` can take).
+    hl_fn : Callable[[list], list] | None
+        The ground-truth algorithm: symbol sequence (length ``seq_len``) -> a
+        **per-position** output list (length ``seq_len``). For real InterpBench
+        cases DON'T hand-write this — inject the compiled HL model via
+        ``interpbench_loading.build_pipelines`` (``hl_fn`` runs the tracr program).
+        Only standalone/illustrative cases with no trained model define it inline.
     bos : Any
         BOS symbol tracr prepends (``None`` to disable). Sets ``bos_offset``.
     target_pos : int
@@ -63,8 +65,8 @@ class InterpBenchConfig:
     case: str
     vocab: list
     seq_len: int
-    hl_fn: Callable[[list], list]
     out_vocab: list
+    hl_fn: Callable[[list], list] | None = None
     bos: Any = "BOS"
     target_pos: int = -1
     embeddings: dict[str, Callable] | None = None
@@ -77,12 +79,13 @@ class InterpBenchConfig:
 
 def create_interpbench_causal_model(cfg: InterpBenchConfig) -> CausalModel:
     """Build the ``CausalModel`` for one tracr case (see module docstring)."""
+    if cfg.hl_fn is None:
+        raise ValueError(
+            f"cfg.hl_fn is None for case {cfg.case}. Inject the compiled HL model's "
+            f"hl_fn (interpbench_loading.build_pipelines) — don't hand-write it."
+        )
     L = cfg.seq_len
     slots = [f"tok_{i}" for i in range(L)]
-
-    def _outputs(t) -> list:
-        # full per-position output list from the ground-truth algorithm
-        return cfg.hl_fn([t[s] for s in slots])
 
     mechanisms: dict[str, Mechanism] = {
         # --- inputs: one variable per sequence slot (parents=[] -> sampled) ---
@@ -94,11 +97,15 @@ def create_interpbench_causal_model(cfg: InterpBenchConfig) -> CausalModel:
                 ([cfg.bos] if cfg.bos is not None else []) + [t[s] for s in slots]
             ),
         ),
+        # --- the FULL per-position output, computed ONCE (hl_fn is a model forward) ---
+        "outputs": Mechanism(
+            parents=slots, compute=lambda t: cfg.hl_fn([t[s] for s in slots])
+        ),
     }
-    # --- one output variable per position ---
+    # --- per-position outputs read from the single "outputs" list ---
     for i in range(L):
         mechanisms[f"out_{i}"] = Mechanism(
-            parents=slots, compute=lambda t, i=i: _outputs(t)[i]
+            parents=["outputs"], compute=lambda t, i=i: t["outputs"][i]
         )
     # --- the studied output (scalar) + its label form ---
     tgt = f"out_{cfg.target_pos % L}"  # -1 -> out_{L-1}
@@ -110,6 +117,7 @@ def create_interpbench_causal_model(cfg: InterpBenchConfig) -> CausalModel:
     values["result"] = list(cfg.out_vocab)
     for i in range(L):
         values[f"out_{i}"] = list(cfg.out_vocab)
+    values["outputs"] = None  # per-position list, computed
     values["raw_input"] = None  # not sampled/enumerated
     values["raw_output"] = None
 
@@ -134,48 +142,26 @@ def _count_last_symbol(seq: list) -> list:
     return [ans] * len(seq)
 
 
-def _token_frequency_classifier(seq: list) -> list:
-    """Case 18 — classify each token by how often it appears in the sequence.
-
-    ratio = count(token) / len(seq):
-        ratio >= 0.50 -> "frequent"      (0.5 counts as frequent, per the case's example)
-        0.25 <  ratio -> "common"
-        else          -> "rare"          ("rare" is <= 25%)
-
-    NOTE: thresholds inferred from the case's documented example
-    (a=3/6 -> frequent, b=2/6 -> common, c=1/6 -> rare). verify_against_model()
-    confirms them against the real HookedTransformer — adjust if it flags a mismatch.
-    """
-    L = len(seq)
-    out = []
-    for x in seq:
-        ratio = seq.count(x) / L
-        if ratio >= 0.5:
-            out.append("frequent")
-        elif ratio > 0.25:
-            out.append("common")
-        else:
-            out.append("rare")
-    return out
-
-
 CASES: dict[str, InterpBenchConfig] = {
     # runnable with NO InterpBench model — unit-tests the causal-model logic only
     "count_last_symbol": InterpBenchConfig(
         case="count_last_symbol",
         vocab=["a", "b", "c"],
         seq_len=3,
-        hl_fn=_count_last_symbol,
         out_vocab=[1, 2, 3],
+        hl_fn=_count_last_symbol,  # inline: illustrative, no trained model exists
         target_pos=-1,
     ),
-    # real trained model on HF: cybershiptrooper/InterpBench, subfolder "18"
+    # real trained model on HF: cybershiptrooper/InterpBench, subfolder "18".
+    # hl_fn is LEFT None on purpose — inject the compiled HL program at runtime via
+    # interpbench_loading.build_pipelines (the ground truth, not a hand-written algo).
+    # seq_len is a placeholder; the driver reconciles it from the model's n_ctx.
     "18": InterpBenchConfig(
         case="18",
         vocab=["a", "b", "c", "d", "e"],  # get_ascii_letters_vocab(count=5)
-        seq_len=10,  # <-- must equal model n_ctx - bos_offset; verify_against_model checks
-        hl_fn=_token_frequency_classifier,
+        seq_len=9,
         out_vocab=["frequent", "common", "rare"],
+        hl_fn=None,  # injected from the HL model
         target_pos=-1,  # per-position task: any position is valid; last by default
     ),
 }
@@ -240,8 +226,9 @@ def verify_against_model(
         expected = cfg.hl_fn(seq)  # per-position, length seq_len
 
         result = pipeline.generate([{"raw_input": trace["raw_input"]}])
-        got_full = result["string"]  # per-position labels incl. BOS position
-        got = got_full[cfg.bos_offset : cfg.bos_offset + cfg.seq_len]
+        # build_tracr_pipeline's decode already strips the BOS position, so this is
+        # the per-position label list (length seq_len), aligned with hl_fn(seq).
+        got = list(result["string"])
 
         if list(got) != list(expected):
             mismatches += 1

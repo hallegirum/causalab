@@ -93,7 +93,7 @@ def _build_belief_artifacts(cfg: DictConfig, out_root: str, batch_size: int) -> 
     pca_meta_path = os.path.join(out_root, "hellinger_pca.meta.json")
     viz_3d_path = os.path.join(out_root, "hellinger_pca_3d.html")
     viz_2d_path = os.path.join(out_root, "hellinger_pca_2d.pdf")
-
+    print(cfg.task.get("target_variable"))
     task, _ = resolve_task(
         task_name=cfg.task.name,
         task_config=OmegaConf.to_container(cfg.task, resolve=True),
