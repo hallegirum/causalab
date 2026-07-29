@@ -12,7 +12,24 @@ from __future__ import annotations
 import gc
 
 import torch
-import pyvene as pv  # type: ignore[import-untyped]
+
+
+class _LazyPyvene:
+    """Proxy so ``pv.X`` imports pyvene only on first use — keeps this module
+    importable without pyvene (the pyvene path is skipped for native pipelines via
+    the hasattr(pipeline, 'build_intervention') guard). See featurizer._LazyPyvene."""
+
+    _mod = None
+
+    def __getattr__(self, name):
+        if _LazyPyvene._mod is None:
+            import pyvene as _pv  # type: ignore[import-untyped]
+
+            _LazyPyvene._mod = _pv
+        return getattr(_LazyPyvene._mod, name)
+
+
+pv = _LazyPyvene()
 
 from causalab.neural.pipeline import Pipeline
 from causalab.neural.units import AtomicModelUnit, InterchangeTarget

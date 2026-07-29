@@ -13,11 +13,12 @@ For training intervention models, see train.py.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from tqdm import tqdm
-from pyvene import IntervenableModel  # type: ignore[import-untyped]
+if TYPE_CHECKING:  # lazy: importing this module must not require pyvene (ib-venv)
+    from pyvene import IntervenableModel  # type: ignore[import-untyped]
 
 from causalab.causal.counterfactual_dataset import (
     CounterfactualExample,

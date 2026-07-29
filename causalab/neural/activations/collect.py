@@ -10,18 +10,19 @@ including dimensionality reduction techniques like SVD/PCA.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 from torch import Tensor
 from tqdm import tqdm
 
+if TYPE_CHECKING:  # lazy: importing this module must not require pyvene (ib-venv)
+    from pyvene import IntervenableModel  # type: ignore[reportMissingTypeStubs]
+
 from causalab.causal.counterfactual_dataset import (
     CounterfactualExample,
     LabeledCounterfactualExample,
 )
-from pyvene import IntervenableModel  # type: ignore[reportMissingTypeStubs]
-
 from causalab.neural.activations.intervenable_model import (
     prepare_intervenable_model,
     delete_intervenable_model,

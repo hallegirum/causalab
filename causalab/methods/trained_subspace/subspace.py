@@ -6,7 +6,24 @@ from typing import Any, cast
 
 import torch
 from torch import Tensor
-import pyvene as pv  # type: ignore[import-untyped]
+
+
+class _LazyPyvene:
+    """Proxy so ``pv.X`` imports pyvene only when a SubspaceFeaturizer is actually
+    built (DAS). Keeps this module importable without pyvene; DAS itself still needs
+    pyvene at runtime (LowRankRotateLayer), so it can't run in a pyvene-less env."""
+
+    _mod = None
+
+    def __getattr__(self, name):
+        if _LazyPyvene._mod is None:
+            import pyvene as _pv  # type: ignore[import-untyped]
+
+            _LazyPyvene._mod = _pv
+        return getattr(_LazyPyvene._mod, name)
+
+
+pv = _LazyPyvene()
 
 from causalab.neural.featurizer import Featurizer
 
