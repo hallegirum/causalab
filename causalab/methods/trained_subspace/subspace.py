@@ -8,22 +8,23 @@ import torch
 from torch import Tensor
 
 
-class _LazyPyvene:
-    """Proxy so ``pv.X`` imports pyvene only when a SubspaceFeaturizer is actually
-    built (DAS). Keeps this module importable without pyvene; DAS itself still needs
-    pyvene at runtime (LowRankRotateLayer), so it can't run in a pyvene-less env."""
+class _LowRankRotateLayer(torch.nn.Module):
+    """Local reimplementation of ``pyvene.models.layers.LowRankRotateLayer`` — a
+    linear map ``x @ W`` (W: n x m) with orthogonal init. Reimplemented so the
+    subspace/manifold featurizers (PCA *and* DAS) need NO pyvene at runtime: the
+    PCA manifold fit builds one of these on EVERY mode, and pyvene can't import on
+    the ib-venv's transformers. Identical math; torch's orthogonal parametrization
+    is still applied on top in SubspaceFeaturizer.__init__."""
 
-    _mod = None
+    def __init__(self, n: int, m: int, init_orth: bool = True) -> None:
+        super().__init__()
+        self.weight = torch.nn.Parameter(torch.empty(n, m), requires_grad=True)
+        if init_orth:
+            torch.nn.init.orthogonal_(self.weight)
 
-    def __getattr__(self, name):
-        if _LazyPyvene._mod is None:
-            import pyvene as _pv  # type: ignore[import-untyped]
+    def forward(self, x: Tensor) -> Tensor:
+        return torch.matmul(x, self.weight)
 
-            _LazyPyvene._mod = _pv
-        return getattr(_LazyPyvene._mod, name)
-
-
-pv = _LazyPyvene()
 
 from causalab.neural.featurizer import Featurizer
 
@@ -80,10 +81,10 @@ class SubspaceFeaturizer(Featurizer):
         )
 
         if shape is not None:
-            rotate = pv.models.layers.LowRankRotateLayer(*shape, init_orth=True)
+            rotate = _LowRankRotateLayer(*shape, init_orth=True)
         else:
             shape = rotation_subspace.shape
-            rotate = pv.models.layers.LowRankRotateLayer(*shape, init_orth=False)
+            rotate = _LowRankRotateLayer(*shape, init_orth=False)
             rotate.weight.data.copy_(rotation_subspace)
 
         rotate = torch.nn.utils.parametrizations.orthogonal(rotate)
