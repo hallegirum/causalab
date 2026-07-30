@@ -35,15 +35,24 @@ def _build_specs(n_ctx: int) -> dict[str, dict[str, Any]]:
 
 def create_token_positions(
     pipeline,
-    template: Any = None,      # accepted for loader-convention compatibility; unused
+    template: Any = None,      # tracr: unused. IOI: a dict of EXTRA named positions.
     templates: Any = None,     # (tracr has no templates)
 ) -> dict[str, TokenPosition]:
     """Build ``last_token`` + one ``pos_{k}`` per token slot.
 
     ``n_ctx`` (and hence the slot count) is read straight off the model, so no
     per-case config is needed here.
+
+    Extra named positions (``template`` as a dict): a non-tracr case (IOI) can inject
+    positions that aren't a fixed absolute index — e.g. the subject S2, whose token index
+    varies per sentence. Values are ``build_token_position_factories`` specs: a dict
+    (``{"type": "index", "position": k}``) for a fixed slot, or a callable
+    ``spec_func(input_sample) -> spec`` for a per-example dynamic position. Names collide-
+    override the built-in ``pos_{k}`` / ``last_token``.
     """
     n_ctx = int(pipeline.model.cfg.n_ctx)
     specs = _build_specs(n_ctx)
+    if isinstance(template, dict):
+        specs.update(template)  # IOI "subject" (dynamic) etc.
     factories = build_token_position_factories(specs, "")  # template unused by index specs
     return {name: factory(pipeline) for name, factory in factories.items()}

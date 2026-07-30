@@ -7,9 +7,12 @@ algorithm). :func:`create_causal_model` turns that into a
 
 Loader contract
 ---------------
-``load_task("interpbench", task_cfg={"case": "18"})`` calls ``CREATE_CAUSAL_MODEL``
-below, which looks the case up in :data:`CASES`. Register a new case by adding an
-``InterpBenchConfig`` to that dict — no other file changes.
+``load_task("interpbench", task_cfg={"case": ..., "vocab": ..., "seq_len": ...,
+"out_vocab": ..., "hl_fn": ...})`` calls ``CREATE_CAUSAL_MODEL`` below, which builds the
+config from ``task_cfg`` directly. :data:`CASES` is only a table of *optional defaults*
+for hand-curated cases — a new InterpBench case runs with NO edit here, because
+``_generate_tracr`` derives ``vocab``/``out_vocab`` from the tracr encoders, ``seq_len``
+from the model's ``n_ctx``, and injects the compiled ``hl_fn``.
 
 Structural note (vs natural_domains)
 ------------------------------------
@@ -23,7 +26,7 @@ position** (``out_0 … out_{L-1}``); ``result`` aliases the studied position
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Any, Callable
 
 from causalab.causal.causal_model import CausalModel
@@ -174,16 +177,38 @@ CASES: dict[str, InterpBenchConfig] = {
 # --------------------------------------------------------------------------- #
 #  Loader-convention exports (read by causalab.tasks.loader.load_task)
 # --------------------------------------------------------------------------- #
+_CONFIG_FIELDS = {f.name for f in fields(InterpBenchConfig)} - {"case"}
+
+
 def CREATE_CAUSAL_MODEL(task_cfg: dict) -> CausalModel:
-    """Factory entry point. ``task_cfg`` must contain ``{"case": <id>}``; any
-    other keys (e.g. ``seq_len``, ``target_pos``) override the registered config."""
+    """Factory entry point — **case-agnostic**.
+
+    The whole config can arrive through ``task_cfg`` (as ``_generate_tracr`` does:
+    ``vocab``/``out_vocab`` from the tracr encoders, ``seq_len`` from ``n_ctx``,
+    ``hl_fn`` from the compiled HL program). :data:`CASES` is only a table of *optional
+    defaults*, so running a brand-new InterpBench case needs NO edit here.
+
+    - Registered case (in :data:`CASES`): task_cfg keys override the stored defaults.
+    - Unregistered case: the config is built entirely from task_cfg. Required keys are
+      ``case``, ``vocab``, ``seq_len``, ``out_vocab`` (``hl_fn`` is injected at runtime;
+      ``bos`` / ``target_pos`` / ``embeddings`` / ``periods`` fall back to
+      ``InterpBenchConfig`` defaults).
+    """
     case = str(task_cfg["case"])
-    if case not in CASES:
-        raise KeyError(f"Unknown InterpBench case '{case}'. Known: {sorted(CASES)}")
-    cfg = CASES[case]
-    overrides = {k: v for k, v in task_cfg.items() if k != "case" and hasattr(cfg, k)}
-    if overrides:
-        cfg = replace(cfg, **overrides)
+    overrides = {k: v for k, v in task_cfg.items() if k in _CONFIG_FIELDS}
+    base = CASES.get(case)
+    if base is not None:
+        cfg = replace(base, **overrides) if overrides else base
+    else:
+        missing = [k for k in ("vocab", "seq_len", "out_vocab") if k not in overrides]
+        if missing:
+            raise KeyError(
+                f"InterpBench case {case!r} is not in the CASES registry, so its config "
+                f"must be supplied via task_cfg; missing required key(s): {missing}. "
+                f"Pass them from _generate_tracr (vocab/out_vocab off the tracr encoders, "
+                f"seq_len from the model's n_ctx). hl_fn is injected separately."
+            )
+        cfg = InterpBenchConfig(case=case, **overrides)
     return create_causal_model(cfg)
 
 
